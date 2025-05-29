@@ -1,543 +1,273 @@
 
-===== App.tsx =====
+===== .editorconfig =====
+# Shopware development editor configuration normalization
+# http://editorconfig.org/
 
+# This is the top-most .editorconfig file; do not search in parent directories.
+root = true
+
+# All files.
+[*]
+end_of_line = lf
+indent_style = space
+indent_size = 4
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+trim_trailing_whitespace = false
+
+============================================================
+
+===== App.tsx =====
 import { ThemeProvider, SidebarCard, Row, Column } from '@hakit/components';
 import { HassConnect } from '@hakit/core';
-import Dashboard from './Dashboard';
+import { lazy, Suspense, memo, Component } from 'react';
+import type { ReactNode } from 'react';
+import { appTheme } from './utils/theme';
+import AppRoutes from './AppRoutes';
+import { pageLoaderStyle } from './utils/styles';
+import { TEXT } from './utils/textSnippets';
 
-function App() {
+class ErrorBoundary extends Component<{ children: ReactNode }> {
+  state = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, info: any) {
+    console.error('Dashboard error:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '20px', color: 'red' }}>
+          <h2>{TEXT.error.title}</h2>
+          <p>{TEXT.error.message}</p>
+          <button onClick={() => this.setState({ hasError: false })}>{TEXT.error.tryAgain}</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const Dashboard = lazy(() => import('./Dashboard'));
+
+const App = memo(() => {
+  const dashboardContentStyle = {
+    padding: '0.75rem',
+    overflowY: 'auto' as const,
+    height: '100vh',
+    maxWidth: '100%',
+  };
+
   return (
     <HassConnect hassUrl={import.meta.env.VITE_HA_URL} hassToken={import.meta.env.VITE_HA_TOKEN}>
-      <ThemeProvider darkMode={true} theme={{ device: { sidebarCard: { width: { expanded: '25rem' } } } }}>
+      <AppRoutes />
+      <ThemeProvider darkMode={true} theme={appTheme}>
         <Row fullWidth wrap='nowrap' fullHeight alignItems='stretch'>
           <SidebarCard
-            startOpen={false}
-            weatherCardProps={{ entity: 'weather.forecast_home' }}
-            include={[
-              { title: 'Overview', hash: '#overview' },
-              { title: 'Living Room', hash: '#living-room' },
-              { title: 'Bedroom', hash: '#bedroom' },
-              { title: 'Scenes', hash: '#scenes' },
-              { title: 'Power Monitoring', hash: '#power-monitoring' },
-              { title: 'Battery Levels', hash: '#battery-levels' },
-              { title: 'Automations', hash: '#automations' },
-              { title: 'System', hash: '#system' },
-              { title: 'Miscellaneous', hash: '#miscellaneous' },
-              { title: 'All Entities', hash: '#all-entities' },
-            ]}
+            startOpen={true}
+            weatherCardProps={{
+              entity: 'weather.forecast_home'
+            }}
           />
-          <Column fullWidth gap='1rem' justifyContent='flex-start' className='dashboard-content'>
-            <Dashboard />
+          <Column fullWidth gap='0.75rem' justifyContent='flex-start' className='dashboard-content' style={dashboardContentStyle}>
+            <ErrorBoundary>
+              <Suspense
+                fallback={
+                  <div className='loading' style={pageLoaderStyle.container}>
+                    {TEXT.loading}
+                  </div>
+                }
+              >
+                <Dashboard />
+              </Suspense>
+            </ErrorBoundary>
           </Column>
         </Row>
       </ThemeProvider>
     </HassConnect>
   );
-}
+});
+
+App.displayName = 'App';
 
 export default App;
 
+============================================================
+
+===== AppRoutes.tsx =====
+import { useEffect } from 'react';
+import { useHass } from '@hakit/core';
+import { ROUTES } from './config/routes';
+
+function AppRoutes() {
+  const { addRoute } = useHass();
+
+  useEffect(() => {
+    ROUTES.forEach(route => addRoute(route));
+  }, [addRoute]);
+
+  return null;
+}
+
+export { ROUTES };
+export default AppRoutes;
+
+============================================================
 
 ===== Dashboard.tsx =====
+import { Column } from '@hakit/components';
+import { lazy, Suspense, useEffect, useState, useMemo } from 'react';
+import { ROUTES } from './config/routes';
+import { pageLoaderStyle } from './utils/styles';
 
-import { Column, Group } from '@hakit/components';
-import TopSection from './components/TopSection';
-import LivingRoomSection from './components/LivingRoomSection';
-import BedroomSection from './components/BedroomSection';
-import ScenesSection from './components/ScenesSection';
-import PowerMonitoringSection from './components/PowerMonitoringSection';
-import BatteryMonitorSection from './components/BatteryMonitorSection';
-import AutomationsSection from './components/AutomationsSection';
-import SystemSection from './components/SystemSection';
-import MiscellaneousSection from './components/MiscellaneousSection';
-import AllEntitiesListSection from './components/AllEntitiesListSection';
+const DEFAULT_HASH = '#overview';
+
+const PAGE_COMPONENTS: Record<string, React.LazyExoticComponent<any>> = {
+  '#overview': lazy(() => import('./pages/OverviewPage')),
+  '#living-room': lazy(() => import('./pages/LivingRoomPage')),
+  '#bedroom': lazy(() => import('./pages/BedroomPage')),
+  '#automations': lazy(() => import('./pages/AutomationsPage')),
+  '#system': lazy(() => import('./pages/SystemPage')),
+  '#miscellaneous': lazy(() => import('./pages/MiscellaneousPage')),
+  '#all-entities': lazy(() => import('./pages/AllEntitiesPage')),
+};
+
+const validateRoutes = () => {
+  const routeHashes = ROUTES.map(route => route.hash);
+  const componentHashes = Object.keys(PAGE_COMPONENTS);
+
+  const missingComponents = routeHashes.filter(hash => !componentHashes.includes(hash));
+  if (missingComponents.length > 0) {
+    console.warn(`Warning: Some routes don't have matching components:`, missingComponents);
+  }
+
+  const missingRoutes = componentHashes.filter(hash => !routeHashes.includes(hash));
+  if (missingRoutes.length > 0) {
+    console.warn(`Warning: Some components don't have matching routes:`, missingRoutes);
+  }
+};
+
+if (process.env.NODE_ENV !== 'production') {
+  validateRoutes();
+}
+
+const LoadingIndicator = () => (
+  <div className='page-loading' style={pageLoaderStyle.container}>
+    <div className='loading-spinner' style={pageLoaderStyle.spinner}></div>
+    <div>Loading page content...</div>
+    <style>{`
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `}</style>
+  </div>
+);
 
 function Dashboard() {
+  const [currentHash, setCurrentHash] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.location.hash = DEFAULT_HASH;
+    } else {
+      setCurrentHash(window.location.hash);
+    }
+
+    const handleHashChange = () => {
+      const newHash = window.location.hash || DEFAULT_HASH;
+      setCurrentHash(newHash);
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+
+    handleHashChange();
+
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const CurrentPage = useMemo(() => {
+    if (!currentHash) {
+      return null;
+    }
+    const pageComponent = PAGE_COMPONENTS[currentHash as keyof typeof PAGE_COMPONENTS];
+    return pageComponent || PAGE_COMPONENTS[DEFAULT_HASH];
+  }, [currentHash]);
+
+  if (!CurrentPage) {
+    return <LoadingIndicator />;
+  }
+
   return (
-    <Column fullWidth gap='1rem'>
-      <Group title='Dashboard' layout='column' gap='1rem' collapsible={true}>
-        <TopSection id='overview' />
-        <LivingRoomSection id='living-room' />
-        <BedroomSection id='bedroom' />
-        <ScenesSection id='scenes' />
-        <PowerMonitoringSection id='power-monitoring' />
-        <BatteryMonitorSection id='battery-levels' />
-        <AutomationsSection id='automations' />
-        <SystemSection id='system' />
-        <MiscellaneousSection id='miscellaneous' />
-        <AllEntitiesListSection id='all-entities' />
-      </Group>
+    <Column fullWidth gap='0.5rem'>
+      <Suspense fallback={<LoadingIndicator />}>
+        <CurrentPage />
+      </Suspense>
     </Column>
   );
 }
 
 export default Dashboard;
 
-
-===== all-files.txt =====
-
-
-===== components/AllEntitiesListSection.tsx =====
-
-import { Column, Group, EntitiesCard } from '@hakit/components';
-import { useHass } from '@hakit/core';
-
-function AllEntitiesListSection({ id }: { id?: string }) {
-  const { getAllEntities } = useHass();
-  const entities = Object.keys(getAllEntities()) as (keyof ReturnType<typeof getAllEntities>)[];
-  const entitiesJson = JSON.stringify(entities, null, 2);
-
-  return (
-    <Column fullWidth gap='1rem'>
-      <Group
-        id={id}
-        title='All Available Entities'
-        layout='column'
-        justifyContent='flex-start'
-        alignItems='stretch'
-        description={`List of all ${entities.length} entities in your Home Assistant instance as JSON`}
-      >
-        <EntitiesCard includeLastUpdated>
-          <pre>{entitiesJson}</pre>
-        </EntitiesCard>
-      </Group>
-    </Column>
-  );
-}
-
-export default AllEntitiesListSection;
-
-
-===== components/AutomationsSection.tsx =====
-
-import { Group, Row, ButtonCard } from '@hakit/components';
-
-function AutomationsSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='Automation Control' layout='column' justifyContent='flex-start' alignItems='stretch' description='Manage and toggle your home automations.'>
-      <Group title='Run/Trigger Automations' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity='automation.toggle_ambisync_tv' service='toggle' title='AmbiSync TV' icon='mdi:television-ambient-light' lg={3} md={4} sm={6} />
-        <ButtonCard entity='automation.toggle_living_room_power' service='toggle' title='Living Room Power Automation' icon='mdi:home-lightbulb-outline' lg={3} md={4} sm={6} />
-        <ButtonCard entity='automation.system_rainbow_unicorn' service='toggle' title='Rainbow Unicorn' icon='mdi:unicorn-variant' lg={3} md={4} sm={6} />
-        <ButtonCard entity='automation.toggle_tv_ambilight_hue' service='toggle' title='TV Ambilight Hue Automation' icon='mdi:television-guide' lg={3} md={4} sm={6} />
-      </Group>
-      <Group title='Enable/Disable Automation Rules' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity='switch.automation_living_room_wall' service='toggle' title='Living Room Wall Rule' icon='mdi:cogs' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.automation_living_room_sofa_dimmer' service='toggle' title='Living Room Sofa Dimmer Rule' icon='mdi:cogs' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.automation_living_room_tv_table_remote' service='toggle' title='Living Room TV Table Rule' icon='mdi:cogs' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.automation_bedroom_wall_remote' service='toggle' title='Bedroom Wall Remote Rule' icon='mdi:cogs' lg={3} md={4} sm={6} />
-      </Group>
-    </Group>
-  );
-}
-
-export default AutomationsSection;
-
-
-===== components/BatteryMonitorSection.tsx =====
-
-import { Group, Row, SensorCard } from '@hakit/components';
-
-function BatteryMonitorSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title="Device Battery Levels" layout="row" justifyContent="flex-start" alignItems="stretch" description="Keep an eye on the battery status of your wireless devices." wrap="wrap" gap="1rem">
-      <SensorCard entity="sensor.piotr_s_oneplus_12r_battery_level" title="Piotr's OnePlus 12R" icon="mdi:cellphone-wireless" lg={3} md={4} sm={6} />
-      <SensorCard entity="sensor.living_room_sofa_remote_battery" title="Sofa Remote (LR)" icon="mdi:remote-tv" lg={2} md={3} sm={6} />
-      <SensorCard entity="sensor.living_room_wall_remote_battery" title="Wall Remote (LR)" icon="mdi:light-switch-variant" lg={2} md={3} sm={6} />
-      <SensorCard entity="sensor.living_room_dining_table_remote_battery" title="Dining Remote (LR)" icon="mdi:palette-swatch-variant" lg={2} md={3} sm={6} />
-      <SensorCard entity="sensor.bedroom_wall_remote_battery" title="Wall Remote (BR)" icon="mdi:light-switch" lg={2} md={3} sm={6} />
-      <SensorCard entity="sensor.zigbee_button_living_room_power_toggle_battery" title="Zigbee Power Toggle" icon="mdi:power-plug-outline" lg={3} md={4} sm={6} />
-      <SensorCard entity="sensor.custom_zigbee_button_bedroom_extra_battery" title="Zigbee Extra Button (BR)" icon="mdi:gesture-tap-button" lg={3} md={4} sm={6} />
-      <SensorCard entity="sensor.custom_zigbee_button_ambilight_hue_sync_battery" title="Zigbee Ambilight Sync Button" icon="mdi:television-ambient-light" lg={3} md={4} sm={6} />
-    </Group>
-  );
-}
-
-export default BatteryMonitorSection;
-
-
-===== components/BedroomSection.tsx =====
-
-import { Group, Row, ButtonCard, RangeSlider, SensorCard } from '@hakit/components';
-
-function BedroomSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='Bedroom' layout='column' justifyContent='flex-start' alignItems='stretch' description='Manage lights and devices in the bedroom.'>
-      <Group title='Lights Control' layout='column' justifyContent='flex-start' alignItems='stretch' gap="1rem">
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-           <ButtonCard entity='light.bedroom' service='toggle' title='All Bedroom Lights' icon='mdi:lightbulb-group-outline' lg={6} md={6} sm={12}/>
-           <RangeSlider entity='light.bedroom' attribute='brightness' min={0} max={255} step={1} label='All Lights Brightness' lg={6} md={6} sm={12}/>
-        </Row>
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-          <ButtonCard entity='light.bedroom_ceiling_light' service='toggle' title='Ceiling Light' icon='mdi:ceiling-light-outline' lg={2} md={3} sm={6}/>
-          <RangeSlider entity='light.bedroom_ceiling_light' attribute='brightness' min={0} max={255} step={1} label='Ceiling Brightness' lg={4} md={3} sm={6}/>
-          <ButtonCard entity='light.bedroom_desk_light' service='toggle' title='Desk Light' icon='mdi:desk-lamp' lg={2} md={3} sm={6}/>
-          <RangeSlider entity='light.bedroom_desk_light' attribute='brightness' min={0} max={255} step={1} label='Desk Brightness' lg={4} md={3} sm={6}/>
-        </Row>
-      </Group>
-      <Group title='Power Plugs (Simple Toggle)' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity='switch.power_plug_bedroom_desk' service='toggle' title='Desk Plug' icon='mdi:power-plug' lg={3} md={4} sm={6} />
-      </Group>
-      <Group title='Remote Batteries' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <SensorCard entity='sensor.bedroom_wall_remote_battery' title='Wall Remote Battery' icon='mdi:battery' lg={3} md={4} sm={6} />
-      </Group>
-    </Group>
-  );
-}
-
-export default BedroomSection;
-
-
-===== components/LivingRoomSection.tsx =====
-
-import { Group, Row, ButtonCard, RangeSlider, MediaPlayerCard, SensorCard } from '@hakit/components';
-
-function LivingRoomSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='Living Room' layout='column' justifyContent='flex-start' alignItems='stretch' description='Manage lights, media, and devices in the living room.'>
-      <Group title='Lights Control' layout='column' justifyContent='flex-start' alignItems='stretch' gap="1rem">
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-            <ButtonCard entity='light.living_room' service='toggle' title='All Living Room Lights' icon='mdi:lightbulb-group-outline' lg={6} md={6} sm={12}/>
-            <RangeSlider entity='light.living_room' attribute='brightness' min={0} max={255} step={1} label='All Lights Brightness' lg={6} md={6} sm={12}/>
-        </Row>
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-            <ButtonCard entity='light.living_room_dining_1_light' service='toggle' title='Dining 1' icon='mdi:lightbulb-outline' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_dining_1_light' attribute='brightness' min={0} max={255} step={1} label='Dining 1 Brightness' lg={4} md={3} sm={6}/>
-            <ButtonCard entity='light.living_room_dining_2_light' service='toggle' title='Dining 2' icon='mdi:lightbulb-outline' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_dining_2_light' attribute='brightness' min={0} max={255} step={1} label='Dining 2 Brightness' lg={4} md={3} sm={6}/>
-            <ButtonCard entity='light.living_room_dining_3_light' service='toggle' title='Dining 3' icon='mdi:lightbulb-outline' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_dining_3_light' attribute='brightness' min={0} max={255} step={1} label='Dining 3 Brightness' lg={4} md={3} sm={6}/>
-        </Row>
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-            <ButtonCard entity='light.living_room_boja_light' service='toggle' title='Boja Light' icon='mdi:ceiling-light-outline' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_boja_light' attribute='brightness' min={0} max={255} step={1} label='Boja Brightness' lg={4} md={3} sm={6}/>
-            <ButtonCard entity='light.living_room_desk_light' service='toggle' title='Desk Light' icon='mdi:desk-lamp' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_desk_light' attribute='brightness' min={0} max={255} step={1} label='Desk Brightness' lg={4} md={3} sm={6}/>
-        </Row>
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-            <ButtonCard entity='light.living_room_l_tower_top_light' title='L Tower Top' icon='mdi:led-strip-variant' service='toggle' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_l_tower_top_light' attribute='brightness' min={0} max={255} step={1} label='L Tower Top Brightness' lg={4} md={3} sm={6}/>
-            <ButtonCard entity='light.living_room_l_tower_bottom_light' title='L Tower Bottom' icon='mdi:led-strip-variant' service='toggle' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_l_tower_bottom_light' attribute='brightness' min={0} max={255} step={1} label='L Tower Bottom Brightness' lg={4} md={3} sm={6}/>
-        </Row>
-        <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-            <ButtonCard entity='light.living_room_r_tower_top_light' title='R Tower Top' icon='mdi:led-strip-variant' service='toggle' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_r_tower_top_light' attribute='brightness' min={0} max={255} step={1} label='R Tower Top Brightness' lg={4} md={3} sm={6}/>
-            <ButtonCard entity='light.living_room_r_tower_bottom_light' title='R Tower Bottom' icon='mdi:led-strip-variant' service='toggle' lg={2} md={3} sm={6}/>
-            <RangeSlider entity='light.living_room_r_tower_bottom_light' attribute='brightness' min={0} max={255} step={1} label='R Tower Bottom Brightness' lg={4} md={3} sm={6}/>
-        </Row>
-      </Group>
-      <Group title='Power Plugs (Simple Toggle)' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity='switch.power_plug_living_room_rear' service='toggle' title='Rear Plug' icon='mdi:power-plug' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.power_plug_living_room_dining_table' service='toggle' title='Dining Table Plug' icon='mdi:power-plug' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.power_plug_living_room_tv' service='toggle' title='TV Plug' icon='mdi:power-plug' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.power_plug_living_room_ha_yellow' service='toggle' title='HA Yellow Plug' icon='mdi:power-plug' lg={3} md={4} sm={6} />
-      </Group>
-      <Group title='Media Players' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <MediaPlayerCard entity='media_player.philips_ambilight_tv_philips_tv' title='Philips Ambilight TV' volumeLayout='slider' hideMute={false} lg={4} md={6} sm={12} />
-        <MediaPlayerCard entity='media_player.lg_soundbar_dsp9ya' title='LG Soundbar' volumeLayout='slider' hideMute={false} lg={4} md={6} sm={12} />
-        <MediaPlayerCard entity='media_player.philips_ambilight_tv_google_cast' title='Philips TV Chromecast' volumeLayout='slider' hideMute={false} lg={4} md={6} sm={12} />
-      </Group>
-      <Group title='TV Controls & Status' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity='switch.philips_ambilight_tv_screen_state' service='toggle' title='TV Screen Power' icon='mdi:television-classic' lg={3} md={4} sm={6} />
-        <ButtonCard entity='switch.philips_ambilight_tv_ambilight_hue' service='toggle' title='Ambilight + Hue Sync' icon='mdi:television-shimmer' lg={3} md={4} sm={6} />
-        <ButtonCard entity='light.philips_ambilight_tv_ambilight' service='toggle' title='TV Ambilight Toggle' icon='mdi:lightbulb-outline' lg={3} md={4} sm={6} />
-        <SensorCard entity='binary_sensor.philips_ambilight_tv_recording_ongoing' title='TV Recording' icon='mdi:record-rec' lg={3} md={4} sm={6} />
-        <SensorCard entity='binary_sensor.philips_ambilight_tv_new_recording_available' title='New TV Recording' icon='mdi:movie-open' lg={3} md={4} sm={6} />
-      </Group>
-      <Group title='Sensors' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <SensorCard entity='binary_sensor.entertainment_area' name='Entertainment Area Status' lg={3} md={4} sm={12} />
-        <SensorCard entity='sensor.living_room_sofa_remote_battery' title='Sofa Remote Battery' icon='mdi:battery' lg={3} md={4} sm={6} />
-        <SensorCard entity='sensor.living_room_wall_remote_battery' title='Wall Remote Battery' icon='mdi:battery' lg={3} md={4} sm={6} />
-        <SensorCard entity='sensor.living_room_dining_table_remote_battery' title='Dining Table Remote Battery' icon='mdi:battery' lg={3} md={4} sm={6} />
-      </Group>
-    </Group>
-  );
-}
-
-export default LivingRoomSection;
-
-
-===== components/MiscellaneousSection.tsx =====
-
-import { Group, Row, EntitiesCard, EntitiesCardRow, ButtonCard } from '@hakit/components';
-
-function MiscellaneousSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='Utilities & Extras' layout='column' justifyContent='flex-start' alignItems='stretch' description='Additional tools and device functions.'>
-      <Row fullWidth gap='1rem' alignItems='stretch' wrap='wrap'>
-        <EntitiesCard title='My Shopping List' lg={4} md={6} sm={12}>
-          <EntitiesCardRow entity='todo.shopping_list' name='Items to Buy' />
-        </EntitiesCard>
-        <ButtonCard
-          title="Start Voice Conversation"
-          icon="mdi:account-voice"
-          entity="conversation.home_assistant"
-          service="process"
-          serviceData={{ text: "What can I help you with?" }}
-          lg={4} md={6} sm={12}
-        />
-      </Row>
-      <Group title="Device Identify Buttons" layout="row" justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-        <ButtonCard entity="button.zigbee_button_living_room_power_toggle_identify" title="ID LR Power Toggle" icon="mdi:magnify" service="press" layoutType='slim' lg={3} md={4} sm={6} />
-        <ButtonCard entity="button.custom_zigbee_button_bedroom_extra_identify" title="ID BR Extra Button" icon="mdi:magnify" service="press" layoutType='slim' lg={3} md={4} sm={6} />
-        <ButtonCard entity="button.custom_zigbee_button_ambilight_hue_sync_identify" title="ID Ambilight Sync Button" icon="mdi:magnify" service="press" layoutType='slim' lg={3} md={4} sm={6} />
-      </Group>
-    </Group>
-  );
-}
-
-export default MiscellaneousSection;
-
-
-===== components/PowerMonitoringSection.tsx =====
-
-import { Group, Row, ButtonCard, SensorCard } from '@hakit/components';
-
-function PowerMonitoringSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title="Power Plug Management" layout="column" description="Monitor and control smart power plugs.">
-      <Row fullWidth gap="1rem" alignItems="stretch" wrap="wrap">
-        <Group title="Living Room Rear Plug" layout="column" gap="0.5rem" lg={4} md={6} sm={12} card
-          cssStyles={`padding: 1rem; border-radius: var(--ha-card-border-radius, 12px); background-color: var(--ha-card-background, var(--card-background-color, white)); box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));`}
-        >
-          <ButtonCard entity="switch.power_plug_living_room_rear" service="toggle" name="Power" icon="mdi:power-socket-de" />
-          <SensorCard entity="sensor.power_plug_living_room_rear_power" name="Current Power" icon="mdi:lightning-bolt" />
-          <SensorCard entity="sensor.power_plug_living_room_rear_electric_consumption_kwh" name="Total Consumption" icon="mdi:meter-electric-outline" />
-          <SensorCard entity="sensor.power_plug_living_room_rear_node_status" name="Node Status" icon="mdi:signal-variant" />
-          <SensorCard entity="sensor.power_plug_living_room_rear_last_seen" name="Last Seen" icon="mdi:clock-time-three-outline" />
-          <Row gap="0.5rem" fullWidth justifyContentStretch>
-            <ButtonCard entity="button.power_plug_living_room_rear_ping" title="Ping Plug" icon="mdi:access-point-network" service="press" layoutType='slim' fullWidth />
-            <ButtonCard entity="button.power_plug_living_room_rear_reset_accumulated_values" title="Reset kWh" icon="mdi:history" service="press" layoutType='slim' fullWidth warning="Reset kWh data?" />
-          </Row>
-        </Group>
-
-        <Group title="Living Room Dining Table Plug" layout="column" gap="0.5rem" lg={4} md={6} sm={12} card
-          cssStyles={`padding: 1rem; border-radius: var(--ha-card-border-radius, 12px); background-color: var(--ha-card-background, var(--card-background-color, white)); box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));`}
-        >
-          <ButtonCard entity="switch.power_plug_living_room_dining_table" service="toggle" name="Power" icon="mdi:power-socket-de" />
-          <SensorCard entity="sensor.power_plug_living_room_dining_table_power" name="Current Power" icon="mdi:lightning-bolt" />
-          <SensorCard entity="sensor.power_plug_living_room_dining_table_electric_consumption_kwh" name="Total Consumption" icon="mdi:meter-electric-outline" />
-          <SensorCard entity="sensor.power_plug_living_room_dining_table_node_status" name="Node Status" icon="mdi:signal-variant" />
-          <SensorCard entity="sensor.power_plug_living_room_dining_table_last_seen" name="Last Seen" icon="mdi:clock-time-three-outline" />
-          <Row gap="0.5rem" fullWidth justifyContentStretch>
-            <ButtonCard entity="button.power_plug_living_room_dining_table_ping" title="Ping Plug" icon="mdi:access-point-network" service="press" layoutType='slim' fullWidth />
-            <ButtonCard entity="button.power_plug_living_room_dining_table_reset_accumulated_values" title="Reset kWh" icon="mdi:history" service="press" layoutType='slim' fullWidth warning="Reset kWh data?" />
-          </Row>
-        </Group>
-
-        <Group title="Living Room TV Plug" layout="column" gap="0.5rem" lg={4} md={6} sm={12} card
-          cssStyles={`padding: 1rem; border-radius: var(--ha-card-border-radius, 12px); background-color: var(--ha-card-background, var(--card-background-color, white)); box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));`}
-        >
-          <ButtonCard entity="switch.power_plug_living_room_tv" service="toggle" name="Power" icon="mdi:power-socket-de" />
-          <SensorCard entity="sensor.power_plug_living_room_tv_electric_consumption_w" name="Current Power" icon="mdi:lightning-bolt" />
-          <SensorCard entity="sensor.power_plug_living_room_tv_electric_consumption_kwh" name="Total Consumption" icon="mdi:meter-electric-outline" />
-          <SensorCard entity="sensor.power_plug_living_room_tv_node_status" name="Node Status" icon="mdi:signal-variant" />
-          <SensorCard entity="sensor.power_plug_living_room_tv_last_seen" name="Last Seen" icon="mdi:clock-time-three-outline" />
-          <Row gap="0.5rem" fullWidth justifyContentStretch>
-            <ButtonCard entity="button.power_plug_living_room_tv_ping" title="Ping Plug" icon="mdi:access-point-network" service="press" layoutType='slim' fullWidth />
-            <ButtonCard entity="button.power_plug_living_room_tv_reset_accumulated_values" title="Reset kWh" icon="mdi:history" service="press" layoutType='slim' fullWidth warning="Reset kWh data?" />
-          </Row>
-        </Group>
-
-        <Group title="Bedroom Desk Plug" layout="column" gap="0.5rem" lg={4} md={6} sm={12} card
-          cssStyles={`padding: 1rem; border-radius: var(--ha-card-border-radius, 12px); background-color: var(--ha-card-background, var(--card-background-color, white)); box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));`}
-        >
-          <ButtonCard entity="switch.power_plug_bedroom_desk" service="toggle" name="Power" icon="mdi:power-socket-de" />
-          <SensorCard entity="sensor.power_plug_bedroom_desk_power" name="Current Power" icon="mdi:lightning-bolt" />
-          <SensorCard entity="sensor.power_plug_bedroom_desk_electric_consumption_kwh" name="Total Consumption" icon="mdi:meter-electric-outline" />
-          <SensorCard entity="sensor.power_plug_bedroom_desk_node_status" name="Node Status" icon="mdi:signal-variant" />
-          <SensorCard entity="sensor.power_plug_bedroom_desk_last_seen" name="Last Seen" icon="mdi:clock-time-three-outline" />
-          <Row gap="0.5rem" fullWidth justifyContentStretch>
-            <ButtonCard entity="button.power_plug_bedroom_desk_ping" title="Ping Plug" icon="mdi:access-point-network" service="press" layoutType='slim' fullWidth />
-            <ButtonCard entity="button.power_plug_bedroom_desk_reset_accumulated_values" title="Reset kWh" icon="mdi:history" service="press" layoutType='slim' fullWidth warning="Reset kWh data?" />
-          </Row>
-        </Group>
-
-        <Group title="Home Assistant Yellow Plug" layout="column" gap="0.5rem" lg={4} md={6} sm={12} card
-          cssStyles={`padding: 1rem; border-radius: var(--ha-card-border-radius, 12px); background-color: var(--ha-card-background, var(--card-background-color, white)); box-shadow: var(--ha-card-box-shadow, 0px 2px 1px -1px rgba(0,0,0,0.2), 0px 1px 1px 0px rgba(0,0,0,0.14), 0px 1px 3px 0px rgba(0,0,0,0.12));`}
-        >
-          <ButtonCard entity="switch.power_plug_living_room_ha_yellow" service="toggle" name="Power" icon="mdi:power-socket-de" />
-          <SensorCard entity="sensor.power_plug_living_room_ha_yellow_power" name="Current Power" icon="mdi:lightning-bolt" />
-          <SensorCard entity="sensor.power_plug_living_room_ha_yellow_electric_consumption_kwh" name="Total Consumption" icon="mdi:meter-electric-outline" />
-          <SensorCard entity="sensor.power_plug_living_room_ha_yellow_node_status" name="Node Status" icon="mdi:signal-variant" />
-          <SensorCard entity="sensor.power_plug_living_room_ha_yellow_last_seen" name="Last Seen" icon="mdi:clock-time-three-outline" />
-          <Row gap="0.5rem" fullWidth justifyContentStretch>
-            <ButtonCard entity="button.power_plug_living_room_ha_yellow_ping" title="Ping Plug" icon="mdi:access-point-network" service="press" layoutType='slim' fullWidth />
-            <ButtonCard entity="button.power_plug_living_room_ha_yellow_reset_accumulated_values" title="Reset kWh" icon="mdi:history" service="press" layoutType='slim' fullWidth warning="Reset kWh data?" />
-          </Row>
-        </Group>
-      </Row>
-    </Group>
-  );
-}
-
-export default PowerMonitoringSection;
-
-
-===== components/ScenesSection.tsx =====
-
-import { Group, Row, ButtonCard } from '@hakit/components';
-
-function ScenesSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title="Scenes Activation" layout="column" gap="1rem" description="Quickly activate your favorite scenes.">
-      <Group title="Living Room Scenes" layout="row" justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="0.5rem">
-        <ButtonCard entity="scene.living_room_relax" service="turn_on" title="Relax" icon="mdi:sofa-single" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.living_room_bright" service="turn_on" title="Bright" icon="mdi:lightbulb-on" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.living_room_tokyo" service="turn_on" title="Tokyo" icon="mdi:lantern" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.living_room_chinatown" service="turn_on" title="Chinatown" icon="mdi:dragon" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.living_room_rio" service="turn_on" title="Rio" icon="mdi:party-popper" layoutType='slim' lg={2} md={3} sm={4} />
-      </Group>
-      <Group title="Bedroom Scenes" layout="row" justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="0.5rem">
-        <ButtonCard entity="scene.bedroom_osaka" service="turn_on" title="Osaka" icon="mdi:floor-lamp-torchiere-variant" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.bedroom_tokyo" service="turn_on" title="Tokyo" icon="mdi:floor-lamp-torchiere-variant-outline" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.bedroom_bright" service="turn_on" title="Bright" icon="mdi:brightness-7" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.bedroom_relax" service="turn_on" title="Relax" icon="mdi:moon-waning-crescent" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.bedroom_rio" service="turn_on" title="Rio" icon="mdi:pine-tree-fire" layoutType='slim' lg={2} md={3} sm={4} />
-        <ButtonCard entity="scene.bedroom_glitz_and_glam" service="turn_on" title="Glitz & Glam" icon="mdi:creation" layoutType='slim' lg={2} md={3} sm={4} />
-      </Group>
-    </Group>
-  );
-}
-
-export default ScenesSection;
-
-
-===== components/SystemSection.tsx =====
-
-import { Group } from '@hakit/components';
-import SoftwareUpdatesSection from './system/SoftwareUpdatesSection';
-import FirmwareUpdatesSection from './system/FirmwareUpdatesSection';
-import BackupNetworkSection from './system/BackupNetworkSection';
-import ControllerStatusSection from './system/ControllerStatusSection';
-
-function SystemSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='System Management' layout='column' justifyContent='flex-start' alignItems='stretch' description='Oversee system updates, health, and network status.' gap="1rem">
-      <SoftwareUpdatesSection />
-      <FirmwareUpdatesSection />
-      <BackupNetworkSection />
-      <ControllerStatusSection />
-    </Group>
-  );
-}
-export default SystemSection;
-
-
-===== components/TopSection.tsx =====
-
-import { Group, Row, TimeCard, PersonCard, WeatherCard, EntitiesCard, EntitiesCardRow, SensorCard, ButtonCard } from '@hakit/components';
-
-function TopSection({ id }: { id?: string }) {
-  return (
-    <Group id={id} title='Overview' layout='column' justifyContent='flex-start' alignItems='stretch' description='House status, weather, and key information.'>
-      <Row fullWidth gap='1rem' alignItems='stretch' wrap='wrap'>
-        <TimeCard lg={3} md={4} sm={6} />
-        <WeatherCard entity='weather.forecast_home' lg={3} md={4} sm={6} />
-        <PersonCard entity='person.piotr' name='Piotr' lg={3} md={4} sm={6} />
-        <PersonCard entity='person.jason' name='Jason' lg={3} md={4} sm={6} />
-      </Row>
-      <Row fullWidth gap='1rem' alignItems='stretch' wrap='wrap'>
-        <EntitiesCard title='Sun Times' includeLastUpdated lg={4} md={6} sm={12}>
-          <EntitiesCardRow entity='sensor.sun_next_dawn' name='Next Dawn' />
-          <EntitiesCardRow entity='sensor.sun_next_dusk' name='Next Dusk' />
-          <EntitiesCardRow entity='sensor.sun_next_midnight' name='Next Midnight' />
-          <EntitiesCardRow entity='sensor.sun_next_noon' name='Next Noon' />
-          <EntitiesCardRow entity='sensor.sun_next_rising' name='Next Sunrise' />
-          <EntitiesCardRow entity='sensor.sun_next_setting' name='Next Sunset' />
-        </EntitiesCard>
-        <SensorCard entity='sensor.piotr_s_oneplus_12r_battery_level' title="Piotr's Phone Battery" icon='mdi:battery-charging-80' lg={2} md={3} sm={6} />
-        <ButtonCard entity='device_tracker.piotr_s_oneplus_12r' title="Piotr's Phone Location" icon='mdi:cellphone' hideState={false} lg={2} md={3} sm={6} />
-        <SensorCard entity='binary_sensor.stuckinajacuzzi_wan_status' title='Internet Status' icon='mdi:wan' lg={2} md={3} sm={6} />
-        <SensorCard entity='sensor.backup_backup_manager_state' title='Last Backup State' icon='mdi:backup-restore' lg={2} md={3} sm={6} />
-      </Row>
-    </Group>
-  );
-}
-
-export default TopSection;
-
-
-===== components/system/BackupNetworkSection.tsx =====
-
-import { Group, Row, SensorCard } from '@hakit/components';
-
-function BackupNetworkSection() {
-  return (
-    <Group title='Backup & Network Status' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-      <SensorCard entity='sensor.backup_backup_manager_state' title='Backup State' icon='mdi:archive-arrow-down-outline' lg={3} md={4} sm={6} />
-      <SensorCard entity='sensor.backup_last_successful_automatic_backup' title='Last Successful Backup' icon='mdi:history' lg={3} md={4} sm={6} />
-      <SensorCard entity='sensor.backup_next_scheduled_automatic_backup' title='Next Scheduled Backup' icon='mdi:calendar-clock-outline' lg={3} md={4} sm={6} />
-      <SensorCard entity='sensor.stuckinajacuzzi_external_ip' title='External IP Address' icon='mdi:ip-network' lg={3} md={4} sm={6} />
-      <SensorCard entity='sensor.stuckinajacuzzi_download_speed' title='Download Speed' icon='mdi:arrow-down-bold-circle-outline' unit="Mbps" lg={3} md={4} sm={6} />
-      <SensorCard entity='sensor.stuckinajacuzzi_upload_speed' title='Upload Speed' icon='mdi:arrow-up-bold-circle-outline' unit="Mbps" lg={3} md={4} sm={6} />
-      <SensorCard entity='binary_sensor.stuckinajacuzzi_wan_status' title='WAN Internet Status' icon='mdi:wan' lg={3} md={4} sm={6} />
-    </Group>
-  );
-}
-export default BackupNetworkSection;
-
-
-===== components/system/ControllerStatusSection.tsx =====
-
-import { Group, Row, SensorCard } from '@hakit/components';
-
-function ControllerStatusSection() {
-  return (
-    <Group title='System Controllers & Devices' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="1rem">
-      <SensorCard entity='sensor.system_zooz_800_series_z_wave_lr_usb_zst39_status' title='Z-Wave USB Controller' icon='mdi:z-wave' lg={4} md={6} sm={12} />
-    </Group>
-  );
-}
-export default ControllerStatusSection;
-
-
-===== components/system/FirmwareUpdatesSection.tsx =====
-
-import { Group, Row, ButtonCard } from '@hakit/components';
-
-function FirmwareUpdatesSection() {
-  const commonProps = { service:'install', availableModes:['on', 'unavailable'] as const, lg:3, md:4, sm:6 };
-  return (
-    <Group title='Device Firmware Updates' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="0.5rem">
-      <ButtonCard entity='update.power_plug_living_room_rear_firmware' title='LR Rear Plug FW' icon='mdi:power-plug-outline' {...commonProps} />
-      <ButtonCard entity='update.power_plug_living_room_dining_table_firmware' title='LR Dining Plug FW' icon='mdi:power-plug-outline' {...commonProps} />
-      <ButtonCard entity='update.power_plug_living_room_tv_firmware' title='LR TV Plug FW' icon='mdi:power-plug-outline' {...commonProps} />
-      <ButtonCard entity='update.power_plug_bedroom_desk_firmware' title='BR Desk Plug FW' icon='mdi:power-plug-outline' {...commonProps} />
-      <ButtonCard entity='update.power_plug_living_room_ha_yellow_firmware' title='HA Yellow Plug FW' icon='mdi:power-plug-outline' {...commonProps} />
-      <ButtonCard entity='update.zigbee_button_living_room_power_toggle_firmware' title='LR Power Toggle FW' icon='mdi:light-switch' {...commonProps} />
-      <ButtonCard entity='update.custom_zigbee_button_bedroom_extra_firmware' title='BR Extra Button FW' icon='mdi:gesture-tap-button' {...commonProps} />
-      <ButtonCard entity='update.custom_zigbee_button_ambilight_hue_sync_firmware' title='Ambilight Sync Button FW' icon='mdi:television-ambient-light' {...commonProps} />
-      <ButtonCard entity='update.home_assistant_yellow_radio_firmware' title='HA Yellow Radio FW' icon='mdi:radio-tower' {...commonProps} />
-    </Group>
-  );
-}
-export default FirmwareUpdatesSection;
-
-
-===== components/system/SoftwareUpdatesSection.tsx =====
-
-import { Group, Row, ButtonCard } from '@hakit/components';
-
-function SoftwareUpdatesSection() {
-  const commonProps = { service:'install', availableModes:['on', 'unavailable'] as const, lg:2, md:3, sm:4 };
-  return (
-    <Group title='Core Software & Add-on Updates' layout='row' justifyContent='flex-start' alignItems='stretch' wrap='wrap' gap="0.5rem">
-      <ButtonCard entity='update.home_assistant_core_update' title='HA Core' icon='mdi:home-assistant' {...commonProps} />
-      <ButtonCard entity='update.home_assistant_supervisor_update' title='HA Supervisor' icon='mdi:home-assistant' {...commonProps} />
-      <ButtonCard entity='update.home_assistant_operating_system_update' title='HA OS' icon='mdi:server-network' {...commonProps} />
-      <ButtonCard entity='update.file_editor_update' title='File Editor' icon='mdi:file-code' {...commonProps} />
-      <ButtonCard entity='update.samba_share_update' title='Samba Share' icon='mdi:folder-network-outline' {...commonProps} />
-      <ButtonCard entity='update.z_wave_js_update' title='Z-Wave JS' icon='mdi:z-wave' {...commonProps} />
-      <ButtonCard entity='update.advanced_ssh_web_terminal_update' title='SSH Terminal' icon='mdi:console' {...commonProps} />
-      <ButtonCard entity='update.cloudflared_update' title='Cloudflared' icon='mdi:cloud-sync' {...commonProps} />
-      <ButtonCard entity='update.hakit_update' title='Hakit Dashboard' icon='mdi:view-dashboard-edit' {...commonProps} />
-    </Group>
-  );
-}
-export default SoftwareUpdatesSection;
-
+============================================================
+
+===== config/routes.ts =====
+export const ROUTES = [
+  {
+    name: 'Overview',
+    hash: '#overview',
+    icon: 'mdi:home-outline',
+    description: 'Dashboard overview',
+  },
+  {
+    name: 'Living Room',
+    hash: '#living-room',
+    icon: 'mdi:sofa-outline',
+    description: 'Living room controls',
+  },
+  {
+    name: 'Bedroom',
+    hash: '#bedroom',
+    icon: 'mdi:bed-outline',
+    description: 'Bedroom controls',
+  },
+  {
+    name: 'Automations',
+    hash: '#automations',
+    icon: 'mdi:robot-outline',
+    description: 'Home automation controls',
+  },
+  {
+    name: 'System',
+    hash: '#system',
+    icon: 'mdi:cog-outline',
+    description: 'System settings and status',
+  },
+  {
+    name: 'Miscellaneous',
+    hash: '#miscellaneous',
+    icon: 'mdi:dots-horizontal',
+    description: 'Other controls and entities',
+  },
+  {
+    name: 'All Entities',
+    hash: '#all-entities',
+    icon: 'mdi:view-grid-outline',
+    description: 'Complete list of all entities',
+  },
+];
+
+============================================================
 
 ===== index.css =====
 .dashboard {
@@ -584,12 +314,22 @@ export default SoftwareUpdatesSection;
     padding: 2rem;
   }
 }
+============================================================
 
 ===== main.tsx =====
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
+
+const originalDefine = window.customElements.define;
+window.customElements.define = function (name, constructor, options) {
+  if (!customElements.get(name)) {
+    originalDefine.call(this, name, constructor, options);
+  } else {
+    console.info(`Custom element ${name} already defined, skipping registration`);
+  }
+};
 
 const rootElement = document.getElementById('root');
 if (rootElement) {
@@ -600,6 +340,937 @@ if (rootElement) {
   );
 }
 
+============================================================
+
+===== pages/AllEntitiesPage.tsx =====
+import { Column, Group, EntitiesCard } from '@hakit/components';
+import { useHass } from '@hakit/core';
+
+function AllEntitiesPage() {
+  const { getAllEntities } = useHass();
+  const entities = Object.keys(getAllEntities()) as (keyof ReturnType<typeof getAllEntities>)[];
+  const entitiesJson = JSON.stringify(entities, null, 2);
+
+  return (
+    <Column fullWidth gap='1rem'>
+      <Group
+        id='all-entities'
+        title='All Available Entities'
+        layout='column'
+        justifyContent='flex-start'
+        alignItems='stretch'
+        description={`List of all ${entities.length} entities in your Home Assistant instance as JSON`}
+      >
+        {/* @ts-expect-error Property 'title' may exist despite type error, based on original and widespread component usage */}
+        <EntitiesCard title={`All ${entities.length} Entities`}>
+          <pre>{entitiesJson}</pre>
+        </EntitiesCard>
+      </Group>
+    </Column>
+  );
+}
+
+export default AllEntitiesPage;
+
+============================================================
+
+===== pages/AutomationsPage.tsx =====
+import { Column, Group, Row, ButtonCard } from '@hakit/components';
+import { memo } from 'react';
+
+// Define the standard card sizes for consistent layout
+const CARD_SIZES = {
+  standard: { lg: 3 as 3, md: 4 as 4, sm: 6 as 6 },
+};
+
+const AutomationsPage = memo(() => {
+  return (
+    <Column fullWidth gap='1rem'>
+      <Group
+        id='automations'
+        title='Automations'
+        layout='row'
+        justifyContent='flex-start'
+        alignItems='stretch'
+        description='Toggle automation routines'
+      >
+        <Row fullWidth gap='1rem' alignItems='stretch' wrap='wrap'>
+          {/* Only using automations that exist in the system */}
+          <ButtonCard
+            entity='automation.toggle_living_room_power'
+            service='toggle'
+            title='Living Room Power'
+            icon='mdi:toggle-switch'
+            {...CARD_SIZES.standard}
+          />
+          <ButtonCard
+            entity='automation.system_rainbow_unicorn'
+            service='toggle'
+            title='Rainbow Unicorn'
+            icon='mdi:unicorn'
+            {...CARD_SIZES.standard}
+          />
+          <ButtonCard
+            entity='automation.toggle_tv_ambilight_hue'
+            service='toggle'
+            title='TV Ambilight Hue'
+            icon='mdi:television-ambient-light'
+            {...CARD_SIZES.standard}
+          />
+        </Row>
+      </Group>
+    </Column>
+  );
+});
+
+AutomationsPage.displayName = 'AutomationsPage';
+
+export default AutomationsPage;
+
+============================================================
+
+===== pages/BedroomPage.tsx =====
+import { Column, Group, ButtonCard, SensorCard } from '@hakit/components';
+
+function BedroomPage() {
+  return (
+    <Column fullWidth gap='1rem'>
+      <Group
+        id='bedroom'
+        title='Bedroom'
+        layout='column'
+        justifyContent='flex-start'
+        alignItems='stretch'
+        description='Control bedroom devices'
+      >
+        <Group title='Lights' layout='row' justifyContent='flex-start' alignItems='stretch'>
+          <ButtonCard
+            entity='light.bedroom_ceiling_light'
+            service='toggle'
+            title='Ceiling Light'
+            icon='mdi:lightbulb'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard entity='light.bedroom_desk_light' service='toggle' title='Desk Light' icon='mdi:desk-lamp' lg={3} md={4} sm={6} />
+          <ButtonCard entity='light.bedroom' service='toggle' title='All Lights' icon='mdi:lightbulb-group' lg={3} md={4} sm={6} />
+        </Group>
+        <Group title='Power Plugs' layout='row' justifyContent='flex-start' alignItems='stretch'>
+          <ButtonCard
+            entity='switch.power_plug_bedroom_desk'
+            service='toggle'
+            title='Desk Plug'
+            icon='mdi:power-plug'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+        </Group>
+        <Group title='Scenes' layout='row' justifyContent='flex-start' alignItems='stretch'>
+          <ButtonCard
+            entity='scene.bedroom_bright'
+            service='turn_on'
+            title='Bright'
+            icon='mdi:weather-sunny'
+            layoutType='slim'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='scene.bedroom_relax'
+            service='turn_on'
+            title='Relax'
+            icon='mdi:weather-night'
+            layoutType='slim'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard entity='scene.bedroom_osaka' service='turn_on' title='Osaka' icon='mdi:city' layoutType='slim' lg={3} md={4} sm={6} />
+          <ButtonCard entity='scene.bedroom_tokyo' service='turn_on' title='Tokyo' icon='mdi:city' layoutType='slim' lg={3} md={4} sm={6} />
+          <ButtonCard entity='scene.bedroom_rio' service='turn_on' title='Rio' icon='mdi:city' layoutType='slim' lg={3} md={4} sm={6} />
+          <ButtonCard
+            entity='scene.bedroom_glitz_and_glam'
+            service='turn_on'
+            title='Glitz & Glam'
+            icon='mdi:star'
+            layoutType='slim'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+        </Group>
+        <Group title='Remote Batteries' layout='row' justifyContent='flex-start' alignItems='stretch'>
+          <SensorCard entity='sensor.bedroom_wall_remote_battery' title='Wall Remote' icon='mdi:battery' lg={3} md={4} sm={6} />
+        </Group>
+      </Group>
+    </Column>
+  );
+}
+
+export default BedroomPage;
+
+============================================================
+
+===== pages/LivingRoomPage.tsx =====
+import { Group, Row, ButtonCard, MediaPlayerCard, EntitiesCard, EntitiesCardRow, SensorCard, Column } from '@hakit/components';
+import { memo } from 'react';
+import { useEntity } from '@hakit/core';
+import { CARD_SIZES, COMPACT_GROUP_PROPS, LAYOUT_PROPS } from '../utils/componentTypes';
+import type { ExtendedEntitiesCardProps } from '../utils/componentTypes';
+import { TEXT } from '../utils/textSnippets';
+
+const LivingRoomPage = memo(() => {
+  // Example of safely checking if an entity exists before rendering controls
+  const entertainmentAreaEntity = useEntity('binary_sensor.entertainment_area');
+  const hasEntertainmentEntity = Boolean(entertainmentAreaEntity?.state);
+
+  return (
+    <Column fullWidth gap={LAYOUT_PROPS.compact.gap}>
+      <Group
+        id='living-room'
+        title={TEXT.livingRoom.title}
+        layout='column'
+        justifyContent='flex-start'
+        alignItems='stretch'
+        description={TEXT.livingRoom.description}
+      >
+        <Group title={TEXT.livingRoom.lights.title} {...COMPACT_GROUP_PROPS}>
+          <Row fullWidth gap={LAYOUT_PROPS.compact.gap} alignItems='stretch' wrap='wrap'>
+            <ButtonCard
+              entity='light.living_room'
+              service='toggle'
+              title={TEXT.livingRoom.lights.all}
+              icon='mdi:lightbulb-group'
+              {...CARD_SIZES.standard}
+            />
+            <ButtonCard
+              entity='light.living_room'
+              service='turn_on'
+              serviceData={{ brightness_pct: 100 }}
+              title={TEXT.livingRoom.lights.brightness100}
+              icon='mdi:brightness-7'
+              {...CARD_SIZES.standard}
+            />
+            <ButtonCard
+              entity='light.living_room'
+              service='turn_on'
+              serviceData={{ brightness_pct: 50 }}
+              title={TEXT.livingRoom.lights.brightness50}
+              icon='mdi:brightness-5'
+              {...CARD_SIZES.standard}
+            />
+            <ButtonCard
+              entity='light.living_room_dining_1_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.dining1}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_r_tower_top_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.rTowerTop}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_dining_3_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.dining3}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_desk_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.desk}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_l_tower_bottom_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.lTowerBottom}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_r_tower_bottom_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.rTowerBottom}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_dining_2_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.dining2}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_boja_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.boja}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='light.living_room_l_tower_top_light'
+              service='toggle'
+              title={TEXT.livingRoom.lights.lTowerTop}
+              icon='mdi:lightbulb'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+        <Group title={TEXT.livingRoom.powerPlugs.title} layout='row' justifyContent='flex-start' alignItems='stretch' gap={LAYOUT_PROPS.compact.gap}>
+          <ButtonCard
+            entity='switch.power_plug_living_room_rear'
+            service='toggle'
+            title={TEXT.livingRoom.powerPlugs.rear}
+            icon='mdi:power-plug'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='switch.power_plug_living_room_dining_table'
+            service='toggle'
+            title={TEXT.livingRoom.powerPlugs.diningTable}
+            icon='mdi:power-plug'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='switch.power_plug_living_room_tv'
+            service='toggle'
+            title={TEXT.livingRoom.powerPlugs.tv}
+            icon='mdi:power-plug'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='switch.power_plug_living_room_ha_yellow'
+            service='toggle'
+            title={TEXT.livingRoom.powerPlugs.haYellow}
+            icon='mdi:power-plug'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+        </Group>
+        <Group title={TEXT.livingRoom.media.title} layout='row' justifyContent='flex-start' alignItems='stretch' gap={LAYOUT_PROPS.compact.gap}>
+          <MediaPlayerCard
+            entity='media_player.philips_ambilight_tv_philips_tv'
+            volumeLayout='slider'
+            hideMute={false}
+            lg={4}
+            md={6}
+            sm={12}
+          />
+          <MediaPlayerCard entity='media_player.lg_soundbar_dsp9ya' volumeLayout='slider' hideMute={false} lg={4} md={6} sm={12} />
+          <MediaPlayerCard
+            entity='media_player.philips_ambilight_tv_google_cast'
+            volumeLayout='slider'
+            hideMute={false}
+            lg={4}
+            md={6}
+            sm={12}
+          />
+        </Group>
+        <Group title={TEXT.livingRoom.tvControls.title} layout='row' justifyContent='flex-start' alignItems='stretch' gap={LAYOUT_PROPS.compact.gap}>
+          <ButtonCard
+            entity='switch.philips_ambilight_tv_screen_state'
+            service='toggle'
+            title={TEXT.livingRoom.tvControls.screen}
+            icon='mdi:television'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='switch.philips_ambilight_tv_ambilight_hue'
+            service='toggle'
+            title={TEXT.livingRoom.tvControls.ambilightHue}
+            icon='mdi:television-ambient-light'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+          <ButtonCard
+            entity='light.philips_ambilight_tv_ambilight'
+            service='toggle'
+            title={TEXT.livingRoom.tvControls.ambilight}
+            icon='mdi:lightbulb'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+        </Group>
+        <Group title='Sensors' {...COMPACT_GROUP_PROPS}>
+          <EntitiesCard {...CARD_SIZES.full} {...({ title: 'Entertainment' } as ExtendedEntitiesCardProps)}>
+            {hasEntertainmentEntity ? (
+              <EntitiesCardRow entity='binary_sensor.entertainment_area' />
+            ) : (
+              <div>Entertainment area entity not available</div>
+            )}
+          </EntitiesCard>
+
+          {/* Example of how to add a RangeSlider with proper typing when needed */}
+          {/*
+          <RangeSlider
+            entity='media_player.lg_soundbar_dsp9ya'
+            {...({} as ExtendedRangeSliderProps)}
+            min={0}
+            max={100}
+            onChange={handleVolumeChange}
+          />
+          */}
+        </Group>
+        <Group title='Remote Batteries' layout='row' justifyContent='flex-start' alignItems='stretch' gap={LAYOUT_PROPS.compact.gap}>
+          <SensorCard entity='sensor.living_room_sofa_remote_battery' title='Sofa Remote' icon='mdi:battery' lg={3} md={4} sm={6} />
+          <SensorCard entity='sensor.living_room_wall_remote_battery' title='Wall Remote' icon='mdi:battery' lg={3} md={4} sm={6} />
+          <SensorCard
+            entity='sensor.living_room_dining_table_remote_battery'
+            title='Dining Table Remote'
+            icon='mdi:battery'
+            lg={3}
+            md={4}
+            sm={6}
+          />
+        </Group>
+      </Group>
+    </Column>
+  );
+});
+
+LivingRoomPage.displayName = 'LivingRoomPage';
+
+export default LivingRoomPage;
+
+============================================================
+
+===== pages/MiscellaneousPage.tsx =====
+import { Column, Group, EntitiesCard, EntitiesCardRow, Row } from '@hakit/components';
+import type { EntityName } from '@hakit/core';
+import { memo, useMemo } from 'react';
+import { CARD_SIZES, COMPACT_GROUP_PROPS, LAYOUT_PROPS } from '../utils/componentTypes';
+import type { ExtendedEntitiesCardProps } from '../utils/componentTypes';
+import { TEXT } from '../utils/textSnippets';
+
+const MiscellaneousPage = memo(() => {
+  const shoppingListEntity = useMemo(() => 'todo.shopping_list' as EntityName, []);
+
+  const hasShoppingList = Boolean(shoppingListEntity);
+
+  return (
+    <Column fullWidth gap={LAYOUT_PROPS.compact.gap}>
+      <Group id='miscellaneous' title={TEXT.miscellaneous.title} description={TEXT.miscellaneous.description} {...COMPACT_GROUP_PROPS}>
+        <Row fullWidth gap={LAYOUT_PROPS.compact.gap} alignItems='stretch' wrap='wrap'>
+          <EntitiesCard {...CARD_SIZES.wide} {...({ title: TEXT.miscellaneous.shoppingList } as ExtendedEntitiesCardProps)}>
+            {hasShoppingList ? <EntitiesCardRow entity={shoppingListEntity} /> : <div>{TEXT.miscellaneous.notAvailable}</div>}
+          </EntitiesCard>
+        </Row>
+      </Group>
+    </Column>
+  );
+});
+
+MiscellaneousPage.displayName = 'MiscellaneousPage';
+
+export default MiscellaneousPage;
+
+============================================================
+
+===== pages/OverviewPage.tsx =====
+import {
+  Column,
+  Group,
+  Row,
+  TimeCard,
+  PersonCard,
+  WeatherCard,
+  EntitiesCard,
+  EntitiesCardRow,
+  ButtonCard,
+  SensorCard,
+} from '@hakit/components';
+import { memo } from 'react';
+import type { EntityName } from '@hakit/core';
+import type { ExtendedEntitiesCardProps } from '../utils/componentTypes';
+import { CARD_SIZES, DEFAULT_GROUP_PROPS } from '../utils/componentTypes';
+import { useEntityExists, useEntityState } from '../utils/entityHelpers';
+
+/**
+ * OverviewPage Component - Home dashboard main view
+ * Shows overview of house status including weather, network, people, and media devices
+ * Uses entity helpers for null safety and improved reliability
+ */
+const OverviewPage = memo(() => {
+  // Check if key entities exist before rendering
+  const hasWeather = useEntityExists('weather.forecast_home');
+  const hasPiotr = useEntityExists('person.piotr');
+  const hasJason = useEntityExists('person.jason');
+
+  // Get entity states with null safety
+  const wanStatus = useEntityState('binary_sensor.stuckinajacuzzi_wan_status', 'unknown');
+  const externalIp = useEntityState('sensor.stuckinajacuzzi_external_ip', '0.0.0.0');
+
+  // Example of conditional content based on entity state
+  const isInternetConnected = wanStatus === 'on';
+  return (
+    <Column fullWidth gap='1.5rem'>
+      {/* Header Section */}
+      <Group title='Home Dashboard' description='Welcome to your smart home' layout='column' id='header' />
+
+      {/* Main Overview Section */}
+      <Group id='overview' title='At a Glance' description='House status and weather' {...DEFAULT_GROUP_PROPS}>
+        <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+          <TimeCard key='time-card' {...CARD_SIZES.standard} />
+          {hasWeather ? (
+            <WeatherCard key='weather-card' entity='weather.forecast_home' {...CARD_SIZES.standard} />
+          ) : (
+            <SensorCard
+              key='weather-unavailable'
+              entity='weather.forecast_home'
+              title='Weather'
+              value='Weather data unavailable'
+              icon='mdi:weather-cloudy-alert'
+              {...CARD_SIZES.standard}
+            />
+          )}
+          {hasPiotr ? (
+            <PersonCard key='person-piotr' entity='person.piotr' {...CARD_SIZES.standard} />
+          ) : (
+            <SensorCard
+              key='person-piotr-unavailable'
+              entity='person.piotr'
+              title='Piotr'
+              value='Data unavailable'
+              icon='mdi:account-alert'
+              {...CARD_SIZES.standard}
+            />
+          )}
+          {hasJason ? (
+            <PersonCard key='person-jason' entity='person.jason' {...CARD_SIZES.standard} />
+          ) : (
+            <SensorCard
+              key='person-jason-unavailable'
+              entity='person.jason'
+              title='Jason'
+              value='Data unavailable'
+              icon='mdi:account-alert'
+              {...CARD_SIZES.standard}
+            />
+          )}
+        </Row>
+      </Group>
+
+      {/* Network & Status Section */}
+      <Group id='network-status' title='Network & Status' description='Connection status and metrics' {...DEFAULT_GROUP_PROPS}>
+        <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+          <SensorCard
+            entity='binary_sensor.stuckinajacuzzi_wan_status'
+            title={`Internet ${isInternetConnected ? 'Connected' : 'Disconnected'}`}
+            icon={isInternetConnected ? 'mdi:web' : 'mdi:web-off'}
+            {...CARD_SIZES.standard}
+          />
+          <SensorCard
+            entity='sensor.stuckinajacuzzi_external_ip'
+            title='External IP'
+            icon='mdi:ip-network'
+            value={externalIp?.toString()}
+            {...CARD_SIZES.standard}
+          />
+          <SensorCard entity='sensor.stuckinajacuzzi_download_speed' title='Download Speed' icon='mdi:download' {...CARD_SIZES.standard} />
+          <SensorCard entity='sensor.stuckinajacuzzi_upload_speed' title='Upload Speed' icon='mdi:upload' {...CARD_SIZES.standard} />
+        </Row>
+      </Group>
+
+      {/* People & Devices Section */}
+      <Group id='people-devices' title='People & Devices' description='Location and device status' {...DEFAULT_GROUP_PROPS}>
+        <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+          <ButtonCard
+            entity='device_tracker.piotr_s_oneplus_12r'
+            title="Piotr's Phone"
+            icon='mdi:cellphone'
+            hideState={false}
+            {...CARD_SIZES.standard}
+          />
+          <SensorCard
+            entity='sensor.piotr_s_oneplus_12r_battery_level'
+            title="Piotr's Phone Battery"
+            icon='mdi:battery'
+            {...CARD_SIZES.standard}
+          />
+          <SensorCard
+            entity='sensor.piotr_s_oneplus_12r_battery_state'
+            title='Battery State'
+            icon='mdi:battery-charging'
+            {...CARD_SIZES.standard}
+          />
+          <SensorCard
+            entity='sensor.piotr_s_oneplus_12r_charger_type'
+            title='Charger Type'
+            icon='mdi:power-plug'
+            {...CARD_SIZES.standard}
+          />
+        </Row>
+      </Group>
+
+      {/* Sun & Astronomical Data */}
+      <Group id='sun-data' title='Sun & Astronomical Data' description='Sun times and positions' {...DEFAULT_GROUP_PROPS}>
+        <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+          {/* Use proper type casting to fix TypeScript errors while maintaining null safety */}
+          <EntitiesCard title='Sun Times' includeLastUpdated {...CARD_SIZES.wide} {...({} as ExtendedEntitiesCardProps)}>
+            {/* Use EntityName type for proper typing */}
+            <EntitiesCardRow entity={'sensor.sun_next_dawn' as EntityName} />
+            <EntitiesCardRow entity={'sensor.sun_next_dusk' as EntityName} />
+            <EntitiesCardRow entity={'sensor.sun_next_midnight' as EntityName} />
+            <EntitiesCardRow entity={'sensor.sun_next_noon' as EntityName} />
+            <EntitiesCardRow entity={'sensor.sun_next_rising' as EntityName} />
+            <EntitiesCardRow entity={'sensor.sun_next_setting' as EntityName} />
+          </EntitiesCard>
+          <SensorCard entity='sun.sun' title='Sun Status' icon='mdi:weather-sunny' {...CARD_SIZES.standard} />
+        </Row>
+      </Group>
+
+      {/* Media Players Section */}
+      <Group id='media-players' title='Media Players' description='Control your media devices' {...DEFAULT_GROUP_PROPS}>
+        <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+          <ButtonCard
+            entity='media_player.philips_ambilight_tv_android_tv_remote'
+            title='TV Remote'
+            icon='mdi:television'
+            {...CARD_SIZES.standard}
+          />
+          <ButtonCard entity='remote.philips_ambilight_tv' title='Philips TV' icon='mdi:remote-tv' {...CARD_SIZES.standard} />
+          <ButtonCard entity='media_player.lg_soundbar_dsp9ya' title='LG Soundbar' icon='mdi:speaker' {...CARD_SIZES.standard} />
+          <ButtonCard
+            entity='media_player.lg_soundbar_dsp9ya_chromecast'
+            title='Soundbar Chromecast'
+            icon='mdi:cast'
+            {...CARD_SIZES.standard}
+          />
+        </Row>
+      </Group>
+    </Column>
+  );
+});
+
+// Add display name for better debugging and React DevTools experience
+OverviewPage.displayName = 'OverviewPage';
+
+export default OverviewPage;
+
+============================================================
+
+===== pages/SystemPage.tsx =====
+import { Column, Group, ButtonCard, SensorCard, Row } from '@hakit/components';
+import { memo } from 'react';
+import { CARD_SIZES, DEFAULT_GROUP_PROPS } from '../utils/componentTypes';
+
+const SystemPage = memo(() => {
+  return (
+    <Column fullWidth gap='1.5rem'>
+      <Group id='system' title='System' description='System updates and status' {...DEFAULT_GROUP_PROPS}>
+        <Group title='Home Assistant Updates' description='Core Home Assistant system updates' {...DEFAULT_GROUP_PROPS}>
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <ButtonCard
+              entity='update.home_assistant_core_update'
+              service='install'
+              title='Core Update'
+              icon='mdi:home-assistant'
+              {...CARD_SIZES.standard}
+            />
+            <ButtonCard
+              entity='update.home_assistant_supervisor_update'
+              service='install'
+              title='Supervisor Update'
+              icon='mdi:server'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.home_assistant_operating_system_update'
+              service='install'
+              title='OS Update'
+              icon='mdi:arch'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.hakit_update'
+              service='install'
+              title='HAKit Update'
+              icon='mdi:package-variant'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+
+        {/* Add-ons Updates */}
+        <Group title='Add-ons Updates' layout='column' justifyContent='flex-start' alignItems='stretch' description='Installed add-ons'>
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <ButtonCard entity='update.file_editor_update' service='install' title='File Editor' icon='mdi:pencil' lg={3} md={4} sm={6} />
+            <ButtonCard
+              entity='update.samba_share_update'
+              service='install'
+              title='Samba Share'
+              icon='mdi:folder-network'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard entity='update.z_wave_js_update' service='install' title='Z-Wave JS' icon='mdi:z-wave' lg={3} md={4} sm={6} />
+            <ButtonCard
+              entity='update.advanced_ssh_web_terminal_update'
+              service='install'
+              title='SSH & Terminal'
+              icon='mdi:console'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard entity='update.cloudflared_update' service='install' title='Cloudflared' icon='mdi:cloud' lg={3} md={4} sm={6} />
+          </Row>
+        </Group>
+
+        {/* Firmware Updates */}
+        <Group
+          title='Firmware Updates'
+          layout='column'
+          justifyContent='flex-start'
+          alignItems='stretch'
+          description='Device firmware updates'
+        >
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <ButtonCard
+              entity='update.power_plug_living_room_rear_firmware'
+              service='install'
+              title='Rear Plug'
+              icon='mdi:power-plug'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.power_plug_living_room_dining_table_firmware'
+              service='install'
+              title='Dining Table Plug'
+              icon='mdi:power-plug'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.power_plug_living_room_tv_firmware'
+              service='install'
+              title='TV Plug'
+              icon='mdi:power-plug'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.power_plug_bedroom_desk_firmware'
+              service='install'
+              title='Desk Plug'
+              icon='mdi:power-plug'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.power_plug_living_room_ha_yellow_firmware'
+              service='install'
+              title='HA Yellow Plug'
+              icon='mdi:power-plug'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+
+        {/* Zigbee Firmware */}
+        <Group
+          title='Zigbee Firmware'
+          layout='column'
+          justifyContent='flex-start'
+          alignItems='stretch'
+          description='Zigbee device firmware'
+        >
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <ButtonCard
+              entity='update.zigbee_button_living_room_power_toggle_firmware'
+              service='install'
+              title='Power Toggle Button'
+              icon='mdi:toggle-switch'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.custom_zigbee_button_bedroom_extra_firmware'
+              service='install'
+              title='Bedroom Button'
+              icon='mdi:gesture-tap-button'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='update.custom_zigbee_button_ambilight_hue_sync_firmware'
+              service='install'
+              title='Ambilight Sync'
+              icon='mdi:lightbulb-sync'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.zigbee_button_living_room_power_toggle_battery'
+              title='Power Toggle Battery'
+              icon='mdi:battery'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.custom_zigbee_button_bedroom_extra_battery'
+              title='Bedroom Button Battery'
+              icon='mdi:battery'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.custom_zigbee_button_ambilight_hue_sync_battery'
+              title='Ambilight Sync Battery'
+              icon='mdi:battery'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+
+        {/* Backup */}
+        <Group title='Backup Status' layout='column' justifyContent='flex-start' alignItems='stretch' description='Backup information'>
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <SensorCard entity='sensor.backup_backup_manager_state' title='Backup Manager' icon='mdi:backup-restore' lg={3} md={4} sm={6} />
+            <SensorCard
+              entity='sensor.backup_last_successful_automatic_backup'
+              title='Last Backup'
+              icon='mdi:calendar-check'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.backup_next_scheduled_automatic_backup'
+              title='Next Backup'
+              icon='mdi:calendar-clock'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+
+        {/* Network */}
+        <Group
+          title='Network Status'
+          layout='column'
+          justifyContent='flex-start'
+          alignItems='stretch'
+          description='Connection status and metrics'
+        >
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <ButtonCard entity='binary_sensor.stuckinajacuzzi_wan_status' title='WAN Status' icon='mdi:web' lg={3} md={4} sm={6} />
+            <SensorCard entity='sensor.stuckinajacuzzi_external_ip' title='External IP' icon='mdi:ip-network' lg={3} md={4} sm={6} />
+            <SensorCard entity='sensor.stuckinajacuzzi_download_speed' title='Download Speed' icon='mdi:download' lg={3} md={4} sm={6} />
+            <SensorCard entity='sensor.stuckinajacuzzi_upload_speed' title='Upload Speed' icon='mdi:upload' lg={3} md={4} sm={6} />
+          </Row>
+        </Group>
+
+        {/* Z-Wave Status */}
+        <Group title='Z-Wave Status' layout='column' justifyContent='flex-start' alignItems='stretch' description='Z-Wave network status'>
+          <Row fullWidth gap='1.25rem' alignItems='stretch' wrap='wrap'>
+            <SensorCard
+              entity='sensor.system_zooz_800_series_z_wave_lr_usb_zst39_status'
+              title='Z-Wave Controller'
+              icon='mdi:z-wave'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <ButtonCard
+              entity='button.power_plug_living_room_rear_ping'
+              service='press'
+              title='Ping Rear Plug'
+              icon='mdi:connection'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.power_plug_living_room_rear_node_status'
+              title='Rear Plug Status'
+              icon='mdi:information-outline'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+            <SensorCard
+              entity='sensor.power_plug_living_room_rear_last_seen'
+              title='Rear Plug Last Seen'
+              icon='mdi:clock-outline'
+              lg={3}
+              md={4}
+              sm={6}
+            />
+          </Row>
+        </Group>
+      </Group>
+    </Column>
+  );
+});
+
+SystemPage.displayName = 'SystemPage';
+
+export default SystemPage;
+
+============================================================
 
 ===== types.ts =====
 export type GridSize = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
@@ -624,91 +1295,262 @@ export const topSectionSize: {
   sm: 12,
 };
 
+============================================================
 
-===== updateproject.py =====
-import os
-import re
+===== utils/componentTypes.ts =====
+/**
+ * Extended component type definitions
+ *
+ * This file contains extended types for components from the @hakit/components library
+ * where the TypeScript definitions might not match the actual component props.
+ * These are used to fix TypeScript errors throughout the application.
+ */
+import type { EntitiesCardProps, RangeSliderProps } from '@hakit/components';
 
-BASE_PATH = '/opt/homebrew/var/www-vhosts/projects/ha-component-kit/ha-dashboard/src'
+/**
+ * Extended EntitiesCard props
+ * Adds the 'title' property that is supported by the component but not in its type definition
+ */
+export type ExtendedEntitiesCardProps = EntitiesCardProps & {
+  title?: string;
+};
 
-# Path to the file that needs modification
-battery_monitor_section_path_relative = 'components/BatteryMonitorSection.tsx'
-battery_monitor_section_path_full = os.path.join(BASE_PATH, battery_monitor_section_path_relative)
+/**
+ * Extended RangeSlider props
+ * Adds the 'entity' property needed for HA entity integration
+ */
+export type ExtendedRangeSliderProps = RangeSliderProps & {
+  entity?: string;
+};
 
-def main():
-    if not os.path.exists(battery_monitor_section_path_full):
-        print(f"Error: File not found at {battery_monitor_section_path_full}")
-        print("Please ensure the BASE_PATH is correct and the file exists.")
-        return
+/**
+ * Responsive grid sizes with proper typing
+ * Using literal types to ensure TypeScript compatibility with @hakit/components
+ */
+export const CARD_SIZES = {
+  // Compact card sizes for higher density UI
+  compact: { lg: 2 as 2, md: 3 as 3, sm: 6 as 6, xs: 6 as 6 },
+  
+  // Standard 1/4 width card (on large screens)
+  standard: { lg: 3 as 3, md: 4 as 4, sm: 6 as 6, xs: 12 as 12 },
 
-    try:
-        with open(battery_monitor_section_path_full, 'r', encoding='utf-8') as f:
-            content = f.read()
+  // Half width card
+  wide: { lg: 6 as 6, md: 6 as 6, sm: 12 as 12 },
 
-        # Step 1: Remove GaugeCard from imports
-        # Example: import { Group, Row, SensorCard, GaugeCard } from '@hakit/components';
-        # Becomes: import { Group, Row, SensorCard } from '@hakit/components';
-        
-        # Find the import line for @hakit/components
-        import_pattern = r"import\s*{([^}]*)}\s*from\s*'@hakit/components';"
-        
-        def replace_import(match):
-            imported_items_str = match.group(1)
-            items = [item.strip() for item in imported_items_str.split(',')]
-            if 'GaugeCard' in items:
-                items.remove('GaugeCard')
-            # Remove empty strings if any resulted from removal
-            items = [item for item in items if item]
-            if not items: # Should not happen if other imports exist
-                return "import {} from '@hakit/components';" 
-            return f"import {{ {', '.join(items)} }} from '@hakit/components';"
+  // Full width card
+  full: { lg: 12 as 12, md: 12 as 12, sm: 12 as 12 },
+  
+  // Grid layouts for efficient space usage
+  oneThird: { lg: 4 as 4, md: 4 as 4, sm: 6 as 6, xs: 6 as 6 },
+  twoThirds: { lg: 8 as 8, md: 8 as 8, sm: 12 as 12 },
+};
 
-        content_after_import_removal, num_import_subs = re.subn(import_pattern, replace_import, content)
-        if num_import_subs > 0:
-            print(f"Removed 'GaugeCard' from imports in {battery_monitor_section_path_relative}.")
-        else:
-            print(f"'GaugeCard' import not found as expected in {battery_monitor_section_path_relative}. Manual check might be needed if error persists.")
-            # If the import wasn't exactly as expected, the content might not change here.
+/**
+ * Common Group component props
+ */
+export const DEFAULT_GROUP_PROPS = {
+  layout: 'column' as const,
+  justifyContent: 'flex-start' as const,
+  alignItems: 'stretch' as const,
+  gap: '0.75rem' as const,
+};
 
-        # Step 2: Replace <GaugeCard ... /> with <SensorCard ... /> for the specific entity
-        # From: <GaugeCard entity="sensor.piotr_s_oneplus_12r_battery_level" name="Piotr's OnePlus 12R" ... />
-        # To:   <SensorCard entity="sensor.piotr_s_oneplus_12r_battery_level" title="Piotr's OnePlus 12R" icon="mdi:cellphone-wireless" lg={3} md={4} sm={6} />
-        # (We'll use SensorCard defaults mostly, but add a title and icon for consistency)
+export const COMPACT_GROUP_PROPS = {
+  ...DEFAULT_GROUP_PROPS,
+  gap: '0.5rem' as const,
+};
 
-        gauge_card_usage_pattern = r'<GaugeCard\s+entity="sensor\.piotr_s_oneplus_12r_battery_level"\s+name="Piotr\'s OnePlus 12R"[^>]*/>'
-        
-        replacement_sensor_card = '<SensorCard entity="sensor.piotr_s_oneplus_12r_battery_level" title="Piotr\'s OnePlus 12R" icon="mdi:cellphone-wireless" lg={3} md={4} sm={6} />'
-        
-        content_final, num_usage_subs = re.subn(gauge_card_usage_pattern, replacement_sensor_card, content_after_import_removal)
+export const LAYOUT_PROPS = {
+  compact: {
+    gap: '0.5rem' as const,
+    padding: '0.5rem' as const
+  },
+  standard: {
+    gap: '0.75rem' as const,
+    padding: '0.75rem' as const
+  }
+};
 
-        if num_usage_subs > 0:
-            print(f"Replaced GaugeCard usage with SensorCard for 'sensor.piotr_s_oneplus_12r_battery_level' in {battery_monitor_section_path_relative}.")
-        else:
-            print(f"GaugeCard usage for 'sensor.piotr_s_oneplus_12r_battery_level' not found as expected in {battery_monitor_section_path_relative}. Manual check might be needed.")
+============================================================
 
+===== utils/entityHelpers.ts =====
+/**
+ * Entity Helper Utilities
+ *
+ * Provides common functions and hooks for working with Home Assistant entities
+ * in a type-safe and null-safe manner.
+ */
+import { useEntity, useHass } from '@hakit/core';
+import type { EntityName } from '@hakit/core';
+import { useMemo, useCallback } from 'react';
 
-        if num_import_subs > 0 or num_usage_subs > 0:
-            with open(battery_monitor_section_path_full, 'w', encoding='utf-8') as f:
-                f.write(content_final)
-            print(f"Successfully modified: {battery_monitor_section_path_full}")
-        else:
-            print(f"No changes made to {battery_monitor_section_path_full} as patterns were not found.")
+/**
+ * Safely check if an entity exists and has a valid state
+ * @param entityId - The Home Assistant entity ID
+ * @returns boolean indicating if the entity exists with a valid state
+ */
+export const useEntityExists = (entityId: EntityName | string): boolean => {
+  const entity = useEntity(entityId as EntityName);
+  return Boolean(entity?.state !== undefined && entity?.state !== null);
+};
 
+/**
+ * Get entity state with optional fallback value
+ * @param entityId - The Home Assistant entity ID
+ * @param fallback - Optional fallback value if state is unavailable
+ * @returns The entity state or fallback value
+ */
+export const useEntityState = <T = string>(entityId: EntityName | string, fallback?: T): string | T | undefined => {
+  const entity = useEntity(entityId as EntityName);
+  return useMemo(() => {
+    if (entity?.state !== undefined && entity?.state !== null) {
+      return entity.state;
+    }
+    return fallback;
+  }, [entity?.state, fallback]);
+};
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
+/**
+ * Helper to safely call Home Assistant services
+ *
+ * It's recommended to use the component's built-in service props instead of this
+ * function directly when possible (e.g., ButtonCard service='toggle')
+ */
+export const useServiceToggle = () => {
+  const { callService } = useHass();
 
-if __name__ == '__main__':
-    if not os.path.isdir(BASE_PATH):
-        print(f"Error: The specified BASE_PATH '{BASE_PATH}' does not exist or is not a directory.")
-        print("Please EDIT THE BASE_PATH variable in the script to point to your dashboard's src directory.")
-    else:
-        print(f"Using BASE_PATH: {BASE_PATH}")
-        confirm = input(f"This script will attempt to modify '{battery_monitor_section_path_relative}' to replace GaugeCard. Ensure BASE_PATH is correct and you have a backup. Continue? (yes/no): ")
-        if confirm.lower() == 'yes':
-            main()
-        else:
-            print("Operation cancelled by user.")
+  // Safe toggle implementation that works with the type system
+  return useCallback(
+    (entityId: string) => {
+      try {
+        // Use specific toggle service based on entity domain
+        const domain = entityId.split('.')[0];
+        if (['light', 'switch', 'input_boolean', 'automation', 'fan'].includes(domain)) {
+          callService({
+            domain: domain as any, // Type cast needed due to strict typing
+            service: 'toggle',
+            target: { entity_id: entityId },
+          });
+          return true;
+        }
+        console.warn(`Toggle not supported for entity domain: ${domain}`);
+        return false;
+      } catch (error) {
+        console.error(`Error toggling entity ${entityId}:`, error);
+        return false;
+      }
+    },
+    [callService]
+  );
+};
+
+/**
+ * Maps entity state to a boolean value with appropriate type checking
+ * @param state - Entity state to check
+ * @returns boolean representing the state (on/off, true/false, etc.)
+ */
+export const isTruthy = (state?: string | null): boolean => {
+  if (!state) return false;
+  return ['on', 'true', 'active', 'home', 'open', 'unlocked', 'detected'].includes(state.toLowerCase());
+};
+
+============================================================
+
+===== utils/styles.ts =====
+export const pageLoaderStyle = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '50vh',
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '4px solid rgba(255,255,255,0.1)',
+    borderRadius: '50%',
+    borderLeft: '4px solid #03A9F4',
+    animation: 'spin 1s linear infinite',
+    marginBottom: '1rem',
+  },
+};
+
+============================================================
+
+===== utils/textSnippets.ts =====
+export const TEXT = {
+  // App.tsx
+  error: {
+    title: 'Something went wrong',
+    message: 'There was an error loading this component. Try refreshing the page.',
+    tryAgain: 'Try again',
+  },
+  loading: 'Loading dashboard...',
+
+  // Dashboard sections/pages
+  livingRoom: {
+    title: 'Living Room',
+    description: 'Control living room devices',
+    lights: {
+      title: 'Lights',
+      all: 'All Lights',
+      brightness100: 'Brightness 100%',
+      brightness50: 'Brightness 50%',
+      dining1: 'Dining 1',
+      dining2: 'Dining 2',
+      dining3: 'Dining 3',
+      desk: 'Desk',
+      boja: 'Boja',
+      rTowerTop: 'R Tower Top',
+      rTowerBottom: 'R Tower Bottom',
+      lTowerTop: 'L Tower Top',
+      lTowerBottom: 'L Tower Bottom',
+    },
+    powerPlugs: {
+      title: 'Power Plugs',
+      rear: 'Rear Plug',
+      diningTable: 'Dining Table',
+      tv: 'TV Plug',
+      haYellow: 'HA Yellow',
+    },
+    media: {
+      title: 'Media',
+    },
+    tvControls: {
+      title: 'TV Controls',
+      screen: 'TV Screen',
+      ambilightHue: 'Ambilight Hue',
+      ambilight: 'Ambilight',
+    },
+  },
+
+  miscellaneous: {
+    title: 'Miscellaneous',
+    description: 'Other entities',
+    shoppingList: 'Shopping List',
+    notAvailable: 'Shopping list entity not available',
+  },
+};
+
+============================================================
+
+===== utils/theme.ts =====
+export const appTheme = {
+  device: {
+    sidebarCard: {
+      width: { expanded: '20rem' },
+    },
+  },
+  colors: {
+    primary: '#03A9F4',
+    secondary: '#9C27B0',
+    background: '#121212',
+    surface: '#1E1E1E',
+  },
+};
+
+============================================================
 
 ===== vite-env.d.ts =====
 /// <reference types="vite/client" />
@@ -723,3 +1565,4 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+============================================================

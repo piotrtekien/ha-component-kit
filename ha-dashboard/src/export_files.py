@@ -24,7 +24,7 @@ def dump_file(fp, fh):
         with fp.open("r", encoding="utf-8", errors="ignore") as src:
             fh.write(f"\n===== {relative_path} =====\n")
             fh.write(src.read())
-            fh.write("\n")
+            fh.write("\n" + "="*60 + "\n")
     except Exception as exc:
         print(f"⚠️  Skipped {fp.name}: {exc}")
 
@@ -35,9 +35,10 @@ file_count = 0
 with out_file.open("w", encoding="utf-8") as out:
     for f in sorted(root.rglob("*")):
         if (
-            f.is_file() and
-            f.name != ".DS_Store" and
-            f.name != "export_files.py"
+            f.is_file()
+            and f.name != ".DS_Store"
+            and f.name != Path(__file__).name
+            and not f.suffix in [".py", ".txt"]
         ):
             dump_file(f, out)
             file_count += 1
